@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- If you're reading this, please consider crediting the inspiration source. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MUD Colorizer Gradient Generator</title>
+    <style>
+      /* Dark mode, black/gray aesthetic with monospaced font */
+      body {
+        background-color: black;
+        color: white;
+        font-family: "Courier New", monospace;
+        padding: 20px;
+        margin: 0;
+      }
+      h1 {
+        text-align: center;
+        margin-bottom: 20px;
+      }
+      #controls {
+        text-align: center;
+        margin-bottom: 20px;
+      }
+      input,
+      button,
+      textarea {
+        font-size: 1rem;
+        padding: 10px;
+        margin: 5px;
+        border: 1px solid #444;
+        background-color: #111;
+        color: white;
+        outline: none;
+      }
+      button {
+        cursor: pointer;
+      }
+      button:hover {
+        background-color: #222;
+      }
+      /* Container for the gradient preview and output side by side */
+      #mainContent {
+        display: flex;
+        flex-direction: row;
+        gap: 20px;
+      }
+      /* Vertical Gradient Preview */
+      #gradientPreview {
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        border: 1px solid #444;
+        /* Fixed height for scrolling if needed */
+        height: 400px;
+        flex: 1;
+      }
+      .shade {
+        flex: 0 0 auto;
+        width: 100%;
+        height: 40px;
+        border-bottom: 1px solid #444;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 0.75rem;
+        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.5);
+      }
+      .shade:last-child {
+        border-bottom: none;
+      }
+      /* Output container for the text area and copy button */
+      #outputContainer {
+        position: relative;
+        flex: 1;
+      }
+      textarea {
+        width: 100%;
+        height: 100%;
+        resize: vertical;
+        background-color: #111;
+        font-family: inherit;
+        margin-top: 0;
+      }
+      #copyBtn {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        padding: 5px 10px;
+        font-size: 0.8rem;
+        background-color: #222;
+        border: 1px solid #444;
+        color: white;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>MUD Colorizer Gradient Generator</h1>
+    <div id="controls">
+      <label for="hexInput">Enter Base Hex Color:</label>
+      <input type="text" id="hexInput" placeholder="#AA00FF" value="#4D3B00" />
+      <br />
+      <button id="generateBtn">Generate Gradient</button>
+      <button id="brighterBtn">Brighter</button>
+      <button id="darkerBtn">Darker</button>
+    </div>
+    <div id="mainContent">
+      <div id="gradientPreview"></div>
+      <div id="outputContainer">
+        <button id="copyBtn">Copy</button>
+        <textarea id="outputString" readonly></textarea>
+      </div>
+    </div>
+
+    <script>
+      // Utility Functions
+
+      // Convert hex to RGB
+      function hexToRgb(hex) {
+        hex = hex.replace(/^#/, "");
+        if (hex.length === 3) {
+          hex = hex.split("").map(c => c + c).join("");
+        }
+        const bigint = parseInt(hex, 16);
+        return {
+          r: (bigint >> 16) & 255,
+          g: (bigint >> 8) & 255,
+          b: bigint & 255
+        };
+      }
+
+      // Convert RGB to hex
+      function rgbToHex(r, g, b) {
+        return (
+          "#" +
+          ((1 << 24) + (r << 16) + (g << 8) + b)
+            .toString(16)
+            .slice(1)
+            .toUpperCase()
+        );
+      }
+
+      // Convert RGB to HSL
+      function rgbToHsl(r, g, b) {
+        r /= 255; g /= 255; b /= 255;
+        const max = Math.max(r, g, b),
+              min = Math.min(r, g, b);
+        let h, s, l = (max + min) / 2;
+        if (max === min) {
+          h = s = 0; // achromatic
+        } else {
+          const d = max - min;
+          s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+          switch (max) {
+            case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+            case g: h = (b - r) / d + 2; break;
+            case b: h = (r - g) / d + 4; break;
+          }
+          h /= 6;
+        }
+        return { h, s, l };
+      }
+
+      // Convert HSL to RGB
+      function hslToRgb(h, s, l) {
+        let r, g, b;
+        if (s === 0) {
+          r = g = b = l;
+        } else {
+          function hue2rgb(p, q, t) {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1/6) return p + (q - p) * 6 * t;
+            if (t < 1/2) return q;
+            if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+            return p;
+          }
+          const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+          const p = 2 * l - q;
+          r = hue2rgb(p, q, h + 1/3);
+          g = hue2rgb(p, q, h);
+          b = hue2rgb(p, q, h - 1/3);
+        }
+        return {
+          r: Math.round(r * 255),
+          g: Math.round(g * 255),
+          b: Math.round(b * 255)
+        };
+      }
+
+      /**
+       * Generate a symmetric gradient from dark to the base (bright) color and back.
+       * The center (base color) is added only once.
+       * @param {string} baseHex - The base hex color (the brightest point).
+       * @param {number} steps - Total number of shades (should be odd for symmetry, e.g. 21).
+       * @returns {Array} Array of hex color strings.
+       */
+      function generateGradient(baseHex, steps) {
+        const { r, g, b } = hexToRgb(baseHex);
+        const hsl = rgbToHsl(r, g, b);
+        const minLight = 0.1; // Dark end (very low lightness)
+        const maxLight = hsl.l; // Base color's lightness as the bright end
+        const gradient = [];
+        // Number of ascending steps (excluding the base color)
+        const N = Math.floor((steps - 1) / 2);
+
+        // Ascending portion: from dark (minLight) to just before base color.
+        for (let i = 0; i < N; i++) {
+          const t = i / N; // i from 0 to N-1 gives t from 0 to (N-1)/N
+          const l = minLight + t * (maxLight - minLight);
+          const rgb = hslToRgb(hsl.h, hsl.s, l);
+          gradient.push(rgbToHex(rgb.r, rgb.g, rgb.b));
+        }
+        // Center: add base color only once.
+        gradient.push(rgbToHex(r, g, b));
+        // Descending portion: mirror ascending.
+        for (let i = N - 1; i >= 0; i--) {
+          const t = i / N;
+          const l = minLight + t * (maxLight - minLight);
+          const rgb = hslToRgb(hsl.h, hsl.s, l);
+          gradient.push(rgbToHex(rgb.r, rgb.g, rgb.b));
+        }
+        return gradient;
+      }
+
+      // Function to validate hex input.
+      function isValidHex(hex) {
+        return /^#([0-9A-F]{3}|[0-9A-F]{6})$/i.test(hex);
+      }
+
+      // Global state
+      let currentBase = "#4D3B00";
+      const steps = 21; // Must be odd (so the center is unique)
+      let currentGradient = generateGradient(currentBase, steps);
+
+      // Update the gradient preview and output string.
+      function updateGradientDisplay() {
+        currentGradient = generateGradient(currentBase, steps);
+        // Create the output string: each color is formatted as "$1X<hex>" (without the #)
+        const outputStr =
+          currentGradient
+            .map(color => "$1X" + color.replace("#", ""))
+            .join(" ") + " $0";
+        document.getElementById("outputString").value = outputStr;
+
+        // Build the visual gradient preview.
+        const preview = document.getElementById("gradientPreview");
+        preview.innerHTML = "";
+        currentGradient.forEach(color => {
+          const box = document.createElement("div");
+          box.className = "shade";
+          box.style.backgroundColor = color;
+          box.textContent = color;
+          preview.appendChild(box);
+        });
+      }
+
+      // Event listeners for Generate, Brighter, and Darker buttons.
+      document.getElementById("generateBtn").addEventListener("click", () => {
+        let input = document.getElementById("hexInput").value.trim();
+        if (!input.startsWith("#")) {
+          input = "#" + input;
+        }
+        input = input.toUpperCase();
+        if (!isValidHex(input)) {
+          alert("Please enter a valid hex color (e.g., #AA00FF).");
+          return;
+        }
+        currentBase = input;
+        updateGradientDisplay();
+      });
+
+      document.getElementById("brighterBtn").addEventListener("click", () => {
+        const { r, g, b } = hexToRgb(currentBase);
+        let hsl = rgbToHsl(r, g, b);
+        hsl.l = Math.min(hsl.l + 0.05, 1);
+        const rgb = hslToRgb(hsl.h, hsl.s, hsl.l);
+        currentBase = rgbToHex(rgb.r, rgb.g, rgb.b);
+        document.getElementById("hexInput").value = currentBase;
+        updateGradientDisplay();
+      });
+
+      document.getElementById("darkerBtn").addEventListener("click", () => {
+        const { r, g, b } = hexToRgb(currentBase);
+        let hsl = rgbToHsl(r, g, b);
+        hsl.l = Math.max(hsl.l - 0.05, 0);
+        const rgb = hslToRgb(hsl.h, hsl.s, hsl.l);
+        currentBase = rgbToHex(rgb.r, rgb.g, rgb.b);
+        document.getElementById("hexInput").value = currentBase;
+        updateGradientDisplay();
+      });
+
+      // Live update: Update the gradient as soon as a valid hex is entered.
+      document.getElementById("hexInput").addEventListener("input", function() {
+        let input = this.value.trim();
+        if (!input.startsWith("#")) {
+          input = "#" + input;
+        }
+        input = input.toUpperCase();
+        if (isValidHex(input)) {
+          currentBase = input;
+          updateGradientDisplay();
+        }
+      });
+
+      // Copy button functionality.
+      document.getElementById("copyBtn").addEventListener("click", () => {
+        const output = document.getElementById("outputString");
+        output.select();
+        output.setSelectionRange(0, 99999); // For mobile devices.
+        try {
+          document.execCommand("copy");
+          document.getElementById("copyBtn").textContent = "Copied!";
+          setTimeout(() => {
+            document.getElementById("copyBtn").textContent = "Copy";
+          }, 1500);
+        } catch (err) {
+          alert("Failed to copy text");
+        }
+      });
+
+      // Initialize the gradient display on page load.
+      updateGradientDisplay();
+    </script>
+  </body>
+</html>
